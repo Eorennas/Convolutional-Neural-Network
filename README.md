@@ -4,12 +4,12 @@ Este repositório contém o desenvolvimento de uma Rede Neural Convolucional (CN
 
 ## 🧠 Objetivo
 
-Implementar, treinar e avaliar uma CNN capaz de **[descrever brevemente a tarefa, por exemplo: classificar imagens de células, identificar padrões em imagens médicas, reconhecer dígitos manuscritos, etc.]**.
+Implementar, treinar e avaliar uma CNN capaz de 
 
 ## 🛠️ Tecnologias Utilizadas
 
 - Python
-- TensorFlow / Keras *(ou PyTorch, dependendo do seu projeto)*
+- TensorFlow / Keras 
 - NumPy, Pandas
 - Matplotlib / Seaborn
 - Jupyter Notebook
