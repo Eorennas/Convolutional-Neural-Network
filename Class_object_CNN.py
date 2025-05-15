@@ -1,59 +1,120 @@
-import os
-import pickle
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers, models
+import matplotlib.pyplot as plt
+import seaborn as sns
+import time
+from tensorflow.keras.datasets import cifar10
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from sklearn.metrics import classification_report, confusion_matrix
 
-# Função para carregar um batch do CIFAR-10
-def load_cifar_batch(filename):
-    with open(filename, 'rb') as f:
-        batch = pickle.load(f, encoding='bytes')
-        images = batch[b'data'].reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
-        labels = np.array(batch[b'labels'])
-        return images, labels
+# Parâmetros
+epochs_val = 30
+batch_size_val = 64
+imageDimensions = (32, 32, 3)
+num_classes = 10
 
-# Caminho correto para os dados já extraídos
-data_path = "cifar-10-python/cifar-10-batches-py"
-train_images, train_labels = [], []
+# Carregar dados
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
 
-# Carregando os 5 batches de treino
-for i in range(1, 6):
-    images, labels = load_cifar_batch(os.path.join(data_path, f'data_batch_{i}'))
-    train_images.append(images)
-    train_labels.append(labels)
+# Normalizar
+x_train = x_train.astype('float32') / 255.0
+x_test = x_test.astype('float32') / 255.0
 
-train_images = np.concatenate(train_images)
-train_labels = np.concatenate(train_labels)
+# One-hot encoding
+y_train_cat = to_categorical(y_train, num_classes)
+y_test_cat = to_categorical(y_test, num_classes)
 
-# Carregando o batch de teste
-test_images, test_labels = load_cifar_batch(os.path.join(data_path, 'test_batch'))
+# Dividir validação
+from sklearn.model_selection import train_test_split
+x_train, x_val, y_train_cat, y_val_cat = train_test_split(x_train, y_train_cat, test_size=0.2)
 
-# Normalização dos dados
-train_images = train_images.astype("float32") / 255.0
-test_images = test_images.astype("float32") / 255.0
+# Aumentar dados
+dataGen = ImageDataGenerator(width_shift_range=0.1,
+                             height_shift_range=0.1,
+                             zoom_range=0.2,
+                             shear_range=0.1,
+                             rotation_range=10)
+dataGen.fit(x_train)
 
-# Construção do modelo CNN
-model = models.Sequential([
-    layers.Conv2D(32, (3, 3), activation='relu', input_shape=(32, 32, 3)),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.MaxPooling2D((2, 2)),
-    layers.Conv2D(64, (3, 3), activation='relu'),
-    layers.Flatten(),
-    layers.Dense(64, activation='relu'),
-    layers.Dense(10, activation='softmax')
-])
+# Modelo CNN mais robusto
+def myModel():
+    model = Sequential()
+    model.add(Conv2D(32, (3, 3), activation='relu', input_shape=imageDimensions))
+    model.add(Conv2D(32, (3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
 
-# Compilação do modelo
-model.compile(optimizer='adam',
-              loss='sparse_categorical_crossentropy',
-              metrics=['accuracy'])
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(Conv2D(64, (3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
 
-# Treinamento do modelo
-history = model.fit(train_images, train_labels, epochs=30,
-                    validation_data=(test_images, test_labels))
+    model.add(Flatten())
+    model.add(Dense(512, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(num_classes, activation='softmax'))
 
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-# Avaliação do modelo
-test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=2)
-print(f"Acurácia no teste: {test_acc:.2f}")
+# Treinar modelo
+model = myModel()
+print(model.summary())
+
+start_train = time.time()
+history = model.fit(dataGen.flow(x_train, y_train_cat, batch_size=batch_size_val),
+                    validation_data=(x_val, y_val_cat),
+                    epochs=epochs_val,
+                    steps_per_epoch=len(x_train)//batch_size_val)
+train_time = time.time() - start_train
+
+# Avaliar
+start_pred = time.time()
+y_pred_probs = model.predict(x_test)
+pred_time = time.time() - start_pred
+y_pred = np.argmax(y_pred_probs, axis=1)
+
+# Resultados
+acc = np.mean(y_pred == y_test.flatten())
+print(f"CNN Acurácia: {acc:.4f}")
+print(f"Tempo treino: {train_time:.2f}s")
+print(f"Tempo predição: {pred_time:.2f}s")
+print(classification_report(y_test, y_pred))
+
+# Matriz de confusão
+cm = confusion_matrix(y_test, y_pred)
+plt.figure(figsize=(10, 8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Greens')
+plt.title("Matriz de Confusão - CNN")
+plt.xlabel("Previsto")
+plt.ylabel("Real")
+plt.savefig("matriz_confusao_cnn.png", dpi=300, bbox_inches='tight')
+plt.close()
+
+# Gráficos de treino
+plt.figure()
+plt.plot(history.history['accuracy'], label='Treino')
+plt.plot(history.history['val_accuracy'], label='Validação')
+plt.title('Acurácia por Época - CNN')
+plt.xlabel('Época')
+plt.ylabel('Acurácia')
+plt.legend()
+plt.savefig("acuracia_cnn.png", dpi=300, bbox_inches='tight')
+plt.close()
+
+plt.figure()
+plt.plot(history.history['loss'], label='Treino')
+plt.plot(history.history['val_loss'], label='Validação')
+plt.title('Perda por Época - CNN')
+plt.xlabel('Época')
+plt.ylabel('Perda')
+plt.legend()
+plt.savefig("perda_cnn.png", dpi=300, bbox_inches='tight')
+plt.close()
+
+# Salvar modelo
+model.save('modelo_cifar10_cnn.h5')
+print("Modelo salvo!")

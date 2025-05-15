@@ -1,154 +1,82 @@
-import os
-import pickle
 import numpy as np
-import tensorflow as tf
-from tensorflow.keras import layers, models, regularizers
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
+import seaborn as sns
+import time
+from tensorflow.keras.datasets import cifar10
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+from tensorflow.keras.utils import to_categorical
+from sklearn.metrics import classification_report, confusion_matrix
 
-#  Forçar uso da GPU (se disponível)
-gpus = tf.config.list_physical_devices('GPU')
-if gpus:
-    try:
-        tf.config.experimental.set_memory_growth(gpus[0], True)
-        print(" GPU detectada e configurada.")
-    except RuntimeError as e:
-        print(f"Erro ao configurar GPU: {e}")
-else:
-    print(" Nenhuma GPU detectada. Usando CPU.")
+# 1. Carregar e preparar os dados
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+x_train = x_train.astype("float32") / 255.0
+x_test = x_test.astype("float32") / 255.0
+y_train_cat = to_categorical(y_train, 10)
+y_test_cat = to_categorical(y_test, 10)
 
-#  Função para carregar batches do CIFAR-10 local
-def load_cifar_batch(filename):
-    with open(filename, 'rb') as f:
-        batch = pickle.load(f, encoding='bytes')
-        images = batch[b'data'].reshape(-1, 3, 32, 32).transpose(0, 2, 3, 1)
-        labels = np.array(batch[b'labels'])
-        return images, labels
-
-#  Caminho do dataset local já extraído
-data_path = "cifar-10-python/cifar-10-batches-py"
-
-# Carregar dados de treino
-train_images, train_labels = [], []
-for i in range(1, 6):
-    images, labels = load_cifar_batch(os.path.join(data_path, f'data_batch_{i}'))
-    train_images.append(images)
-    train_labels.append(labels)
-train_images = np.concatenate(train_images)
-train_labels = np.concatenate(train_labels)
-
-# Carregar dados de teste
-test_images, test_labels = load_cifar_batch(os.path.join(data_path, 'test_batch'))
-
-# Normalizar imagens
-train_images = train_images.astype("float32") / 255.0
-test_images = test_images.astype("float32") / 255.0
-
-# Dividir treino em treino/validação
-from sklearn.model_selection import train_test_split
-train_images, val_images, train_labels, val_labels = train_test_split(
-    train_images, train_labels, test_size=0.2, random_state=42
-)
-
-# Flatten labels
-train_labels = train_labels.flatten()
-val_labels = val_labels.flatten()
-test_labels = test_labels.flatten()
-
-#  Aumento de dados
-data_augmentation = tf.keras.Sequential([
-    layers.RandomFlip("horizontal"),
-    layers.RandomRotation(0.1),
-    layers.RandomZoom(0.1),
-    layers.RandomContrast(0.1),
+# 2. Definir o modelo CNN
+model = Sequential([
+    Conv2D(32, (3,3), activation='relu', input_shape=(32,32,3)),
+    MaxPooling2D((2,2)),
+    Conv2D(64, (3,3), activation='relu'),
+    MaxPooling2D((2,2)),
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(10, activation='softmax')
 ])
 
-# Construir modelo
-def build_model():
-    model = models.Sequential([
-        layers.Input(shape=(32, 32, 3)),
-        data_augmentation,
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
 
-        layers.Conv2D(64, (3,3), activation='relu', padding='same',
-                      kernel_regularizer=regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Conv2D(64, (3,3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2,2)),
-        layers.Dropout(0.2),
+# 3. Treinamento com histórico
+start_train = time.time()
+history = model.fit(x_train, y_train_cat, epochs=30, batch_size=64, validation_split=0.1)
+train_time = time.time() - start_train
 
-        layers.Conv2D(128, (3,3), activation='relu', padding='same',
-                      kernel_regularizer=regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Conv2D(128, (3,3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2,2)),
-        layers.Dropout(0.3),
+# 4. Avaliação
+start_pred = time.time()
+y_pred_probs = model.predict(x_test)
+pred_time = time.time() - start_pred
+y_pred = np.argmax(y_pred_probs, axis=1)
 
-        layers.Conv2D(256, (3,3), activation='relu', padding='same',
-                      kernel_regularizer=regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Conv2D(256, (3,3), activation='relu', padding='same'),
-        layers.BatchNormalization(),
-        layers.MaxPooling2D((2,2)),
-        layers.Dropout(0.4),
+# 5. Métricas
+print("\n=== CNN ===")
+print(f"Acurácia: {np.mean(y_pred == y_test.flatten()):.4f}")
+print(f"Tempo de treino: {train_time:.2f}s")
+print(f"Tempo de predição: {pred_time:.2f}s")
+print(classification_report(y_test, y_pred))
 
-        layers.Flatten(),
-        layers.Dense(256, activation='relu', kernel_regularizer=regularizers.l2(1e-4)),
-        layers.BatchNormalization(),
-        layers.Dropout(0.5),
-        layers.Dense(10, activation='softmax')
-    ])
-    return model
+# 6. Matriz de confusão
+cm = confusion_matrix(y_test, y_pred)
+plt.figure(figsize=(10,8))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+plt.title("Matriz de Confusão - CNN")
+plt.xlabel("Previsto")
+plt.ylabel("Real")
+plt.savefig("matriz_confusao_cnn.png", dpi=300, bbox_inches='tight')
+plt.show()
 
-model = build_model()
-
-#  Compilar modelo
-model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-              loss='sparse_categorical_crossentropy',
-              metrics=['accuracy'])
-
-#  Callbacks
-early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
-reduce_lr = ReduceLROnPlateau(monitor='val_loss', factor=0.2, patience=5, min_lr=1e-6)
-
-#  Treinar modelo
-history = model.fit(train_images, train_labels,
-                    epochs=50,  # Pode parar antes com early stopping
-                    batch_size=64,
-                    validation_data=(val_images, val_labels),
-                    callbacks=[early_stopping, reduce_lr])
-
-#  Avaliação final
-test_loss, test_acc = model.evaluate(test_images, test_labels, verbose=0)
-print(f"\n Acurácia final no conjunto de teste: {test_acc:.4f}")
-
-#  Gráficos de treino
-plt.figure(figsize=(12, 5))
-
-# Acurácia
-plt.subplot(1, 2, 1)
+# 7. Gráfico de acurácia
+plt.figure()
 plt.plot(history.history['accuracy'], label='Treino')
 plt.plot(history.history['val_accuracy'], label='Validação')
 plt.title('Acurácia por Época')
 plt.xlabel('Época')
 plt.ylabel('Acurácia')
 plt.legend()
-plt.grid(True)
-
-# Perda
-plt.subplot(1, 2, 2)
-plt.plot(history.history['loss'], label='Treino')
-plt.plot(history.history['val_loss'], label='Validação')
-plt.title('Loss por Época')
-plt.xlabel('Época')
-plt.ylabel('Loss')
-plt.legend()
-plt.grid(True)
-
-plt.tight_layout()
+plt.savefig("acuracia_por_epoca.png", dpi=300, bbox_inches='tight')
 plt.show()
 
-#  Mostrar resumo
-model.summary()
+# 8. Gráfico de perda
+plt.figure()
+plt.plot(history.history['loss'], label='Treino')
+plt.plot(history.history['val_loss'], label='Validação')
+plt.title('Perda por Época')
+plt.xlabel('Época')
+plt.ylabel('Perda')
+plt.legend()
+plt.savefig("perda_por_epoca.png", dpi=300, bbox_inches='tight')
+plt.show()
